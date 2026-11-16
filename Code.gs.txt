@@ -1,0 +1,399 @@
+/**
+ * บันทึกการเย็บ — ฝั่งเซิร์ฟเวอร์ (Google Apps Script ผูกกับไฟล์ Google Sheets)
+ *
+ * วิธีใช้: ดู README.md
+ * - ข้อมูลเก็บในชีต 3 แท็บ: "รายการ", "รายวัน", "ตั้งค่า"
+ * - เข้าสู่ระบบด้วย PIN 2 ระดับ: เจ้าของ (ทุกอย่าง) / พนักงาน (หน้าจดรายวันเต็ม + สรุปแบบจำกัด แต่ไม่มีตั้งค่า/สำรอง/กู้ข้อมูล)
+ */
+
+// ====== ตั้งค่าตรงนี้ก่อนรัน setup (รันเสร็จแล้วจะลบออกก็ได้) ======
+const SETUP_OWNER_PIN = '123456';   // PIN เจ้าของ เช่น '482915' (แนะนำตัวเลข 6 หลักขึ้นไป)
+const SETUP_STAFF_PIN = '1234';   // PIN พนักงาน เช่น '7391' (ต้องไม่ซ้ำกับของเจ้าของ)
+// ===============================================================
+
+const TZ = 'Asia/Bangkok';
+const SH_ITEMS = 'รายการ';
+const SH_DAYS = 'รายวัน';
+const SH_CFG = 'ตั้งค่า';
+const ITEM_COLS = 12;     // id, วันที่, ออร์เดอร์, แบรนด์, ประเภท, จำนวน, เพิ่มเติม, ราคา, หมายเหตุ, ยอด, โดย, เวลาแก้ไข
+const DAY_COLS = 5;       // วันที่, ยอดหัก, เหตุผล, การมา-ขาด(JSON), เวลาแก้ไข
+const MAX_FAILS = 8;      // ใส่ PIN ผิดครบนี้ใน 10 นาที ระบบจะล็อกชั่วคราว
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+let _ss = null;
+
+/* ---------- หน้าเว็บ ---------- */
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('บันทึกการเย็บประจำวัน ปี 2569')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/* ---------- ติดตั้ง (รันครั้งเดียว หรือรันซ้ำเมื่ออยากเปลี่ยน PIN) ---------- */
+function setup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('ต้องเปิด Apps Script จากเมนู ส่วนขยาย > Apps Script ภายในไฟล์ Google Sheets');
+  const p = props_();
+  p.setProperty('SS_ID', ss.getId());
+  if (!p.getProperty('SALT')) p.setProperty('SALT', Utilities.getUuid());
+
+  if (SETUP_OWNER_PIN || SETUP_STAFF_PIN) {
+    const o = String(SETUP_OWNER_PIN), s = String(SETUP_STAFF_PIN);
+    if (o.length < 4 || s.length < 4) throw new Error('PIN ต้องมีอย่างน้อย 4 ตัว (แนะนำตัวเลข 6 หลักสำหรับเจ้าของ)');
+    if (o === s) throw new Error('PIN เจ้าของและพนักงานต้องไม่เหมือนกัน');
+    p.setProperty('OWNER_H', hashPin_(o));
+    p.setProperty('STAFF_H', hashPin_(s));
+    CacheService.getScriptCache().remove('fails');
+  } else if (!p.getProperty('OWNER_H') || !p.getProperty('STAFF_H')) {
+    throw new Error('ยังไม่ได้ตั้ง PIN: ใส่ค่าที่บรรทัด SETUP_OWNER_PIN และ SETUP_STAFF_PIN ด้านบนไฟล์ แล้วรัน setup อีกครั้ง');
+  }
+
+  _ss = ss;
+  ensureSheet_(ss, SH_ITEMS,
+    ['id', 'วันที่', 'ชื่อออร์เดอร์', 'แบรนด์', 'ประเภทเสื้อ', 'จำนวน (ตัว)', 'เพิ่มเติม', 'ราคา/ตัว', 'หมายเหตุ', 'ยอด (บาท)', 'บันทึกโดย', 'แก้ไขล่าสุด'],
+    ['A', 'B', 'C', 'D', 'E', 'G', 'I', 'K', 'L'],
+    [70, 95, 190, 110, 120, 85, 130, 80, 150, 90, 85, 150]);
+  ensureSheet_(ss, SH_DAYS,
+    ['วันที่', 'ยอดหัก (บาท)', 'เหตุผลที่หัก', 'การมา-ขาด (ระบบใช้ อย่าแก้)', 'แก้ไขล่าสุด'],
+    ['A', 'C', 'D', 'E'],
+    [95, 100, 200, 300, 150]);
+  ensureSheet_(ss, SH_CFG,
+    ['key', 'value (ระบบใช้ อย่าแก้)'],
+    ['A', 'B'],
+    [120, 500]);
+
+  ss.getSheets().forEach(function (sh) {
+    if (['Sheet1', 'Sheet 1', 'ชีต1', 'แผ่นงาน1'].indexOf(sh.getName()) >= 0 && sh.getLastRow() === 0 && ss.getSheets().length > 1) {
+      ss.deleteSheet(sh);
+    }
+  });
+  Logger.log('ตั้งค่าเสร็จแล้ว ต่อไปให้ Deploy เป็น Web app ตามขั้นตอนใน README.md');
+}
+
+function ensureSheet_(ss, name, head, textCols, widths) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  textCols.forEach(function (c) { sh.getRange(c + ':' + c).setNumberFormat('@'); });
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, head.length).setValues([head]);
+    sh.getRange(1, 1, 1, head.length).setFontWeight('bold');
+  }
+  sh.setFrozenRows(1);
+  widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  return sh;
+}
+
+/* ---------- ตัวช่วยพื้นฐาน ---------- */
+function props_() { return PropertiesService.getScriptProperties(); }
+function ss_() {
+  if (_ss) return _ss;
+  const id = props_().getProperty('SS_ID');
+  if (!id) throw new Error('not_setup');
+  _ss = SpreadsheetApp.openById(id);
+  return _ss;
+}
+function sheet_(name) {
+  const sh = ss_().getSheetByName(name);
+  if (!sh) throw new Error('not_setup');
+  return sh;
+}
+function hashPin_(pin) {
+  const salt = props_().getProperty('SALT') || '';
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + '|' + String(pin)));
+}
+function auth_(pin) {
+  const p = props_();
+  const oh = p.getProperty('OWNER_H'), sh = p.getProperty('STAFF_H');
+  if (!oh || !sh || !p.getProperty('SS_ID')) return { error: 'not_setup' };
+  const cache = CacheService.getScriptCache();
+  const fails = Number(cache.get('fails') || 0);
+  if (fails >= MAX_FAILS) return { error: 'locked' };
+  const h = hashPin_(pin);
+  if (h === oh) { cache.remove('fails'); return { role: 'owner' }; }
+  if (h === sh) { cache.remove('fails'); return { role: 'staff' }; }
+  cache.put('fails', String(fails + 1), 600);
+  return { error: 'bad_pin' };
+}
+function normDate_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+  return String(v == null ? '' : v).trim();
+}
+function numOrBlank_(v) {
+  if (v === '' || v == null) return '';
+  const n = Number(v);
+  return isFinite(n) ? n : '';
+}
+function clip_(s) { return String(s == null ? '' : s).slice(0, 300); }
+function nowStr_() { return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd'T'HH:mm:ss"); }
+
+/* ---------- อ่านข้อมูล ---------- */
+function readItems_() {
+  const sh = sheet_(SH_ITEMS);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  const v = sh.getRange(2, 1, n, ITEM_COLS).getValues();
+  const out = [], fix = [];
+  v.forEach(function (r, i) {
+    const date = normDate_(r[1]);
+    if (!DATE_RE.test(date)) return;
+    let id = String(r[0] == null ? '' : r[0]).trim();
+    if (!id) { id = Utilities.getUuid(); fix.push([i + 2, id]); }   // แถวที่เจ้าของเพิ่มเองในชีต
+    out.push({
+      id: id, date: date, order: String(r[2]), brand: String(r[3]), type: String(r[4]),
+      qty: numOrBlank_(r[5]), extra: String(r[6]), price: numOrBlank_(r[7]), note: String(r[8])
+    });
+  });
+  fix.forEach(function (f) { sh.getRange(f[0], 1).setValue(f[1]); });
+  return out;
+}
+function readDays_() {
+  const sh = sheet_(SH_DAYS);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  return sh.getRange(2, 1, n, DAY_COLS).getValues().map(function (r) {
+    const date = normDate_(r[0]);
+    let att = null;
+    if (r[3]) {
+      try {
+        const o = JSON.parse(String(r[3]));
+        if (o && typeof o === 'object') { att = {}; Object.keys(o).forEach(function (k) { att[k] = !!o[k]; }); }
+      } catch (e) { att = null; }
+    }
+    return { date: date, deduct: Number(r[1]) || 0, deductNote: String(r[2] || ''), att: att };
+  }).filter(function (d) { return DATE_RE.test(d.date); });
+}
+function readCfg_() {
+  const sh = sheet_(SH_CFG);
+  const l = sh.getLastRow();
+  const cfg = { workers: [], types: [], brands: [], defaultBrand: '', lastBackup: null };
+  if (l < 2) return cfg;
+  sh.getRange(2, 1, l - 1, 2).getValues().forEach(function (r) {
+    const k = String(r[0]);
+    if (!(k in cfg) || !r[1]) return;
+    try { cfg[k] = JSON.parse(String(r[1])); } catch (e) { /* ข้าม */ }
+  });
+  return cfg;
+}
+function buildHints_(items) {
+  const sorted = items.slice().sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+  const pick = function (f) {
+    const seen = {}, out = [];
+    for (let i = 0; i < sorted.length; i++) {
+      const v = String(sorted[i][f] || '').trim();
+      if (v && !seen[v]) { seen[v] = 1; out.push(v); if (out.length >= 400) break; }
+    }
+    return out;
+  };
+  return { orders: pick('order'), extras: pick('extra'), notes: pick('note') };
+}
+
+/**
+ * โหลดข้อมูลทั้งหมด
+ * - เจ้าของและพนักงาน: ได้ข้อมูลรายวันครบทุกวัน (หน้าจดรายวันใช้งานได้เต็ม)
+ * - เฉพาะเจ้าของ: วันที่สำรองล่าสุด (หน้าตั้งค่า/สำรองข้อมูลเป็นของเจ้าของ)
+ */
+function getAll(pin) {
+  const a = auth_(pin);
+  if (a.error) return { ok: false, error: a.error };
+  try {
+    const owner = a.role === 'owner';
+    const days = {};
+    const ensureDay = function (d) { return days[d] || (days[d] = { items: [], att: null, deduct: 0, deductNote: '' }); };
+    readItems_().forEach(function (it) {
+      ensureDay(it.date).items.push({
+        id: it.id, order: it.order, brand: it.brand, type: it.type, qty: it.qty,
+        extra: it.extra, price: it.price, note: it.note
+      });
+    });
+    readDays_().forEach(function (d) {
+      const x = ensureDay(d.date);
+      x.deduct = d.deduct; x.deductNote = d.deductNote; x.att = d.att;
+    });
+    const cfg = readCfg_();
+    return {
+      ok: true, role: a.role, win: null, backDays: 0,
+      data: {
+        workers: cfg.workers, types: cfg.types, brands: cfg.brands, defaultBrand: cfg.defaultBrand,
+        lastBackup: owner ? cfg.lastBackup : null,
+        days: days,
+        hints: null
+      }
+    };
+  } catch (e) {
+    return { ok: false, error: 'server', msg: String(e && e.message || e) };
+  }
+}
+
+/* ---------- บันทึกการเปลี่ยนแปลง ---------- */
+function sync(pin, payload) {
+  const a = auth_(pin);
+  if (a.error) return { ok: false, error: a.error };
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(25000); } catch (e) { return { ok: false, error: 'busy' }; }
+  try {
+    return applySync_(a.role, payload || {});
+  } catch (e) {
+    return { ok: false, error: 'server', msg: String(e && e.message || e) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function applySync_(role, P) {
+  const owner = role === 'owner';
+  const up = Array.isArray(P.up) ? P.up : [];
+  const delIds = Array.isArray(P.delIds) ? P.delIds : [];
+  const days = Array.isArray(P.days) ? P.days : [];
+  const delDays = Array.isArray(P.delDays) ? P.delDays : [];
+  const BAD = { ok: false, error: 'bad_request' }, FORBID = { ok: false, error: 'forbidden' };
+
+  if (!owner && P.cfg) return FORBID;   // ตั้งค่า/กู้ข้อมูล เฉพาะเจ้าของ
+  for (let i = 0; i < up.length; i++) {
+    const it = up[i];
+    if (!it || !it.id || !DATE_RE.test(String(it.date))) return BAD;
+  }
+  for (let i = 0; i < days.length; i++) {
+    const d = days[i];
+    if (!d || !DATE_RE.test(String(d.date))) return BAD;
+  }
+  for (let i = 0; i < delDays.length; i++) if (!DATE_RE.test(String(delDays[i]))) return BAD;
+
+  const now = nowStr_();
+
+  /* ---- รายการ ---- */
+  const ish = sheet_(SH_ITEMS);
+  const last = ish.getLastRow();
+  const idv = last > 1 ? ish.getRange(2, 1, last - 1, 2).getValues() : [];
+  const idRow = {}, dateRows = {};
+  idv.forEach(function (r, i) {
+    const id = String(r[0] == null ? '' : r[0]);
+    const d = normDate_(r[1]);
+    if (id) idRow[id] = { row: i + 2, date: d };
+    (dateRows[d] = dateRows[d] || []).push(i + 2);
+  });
+  const upd = [], app = [], seen = {};
+  up.forEach(function (it) {
+    const id = String(it.id).slice(0, 64);
+    if (seen[id]) return;
+    seen[id] = 1;
+    const row = itemRow_(Object.assign({}, it, { id: id, date: String(it.date) }), role, now);
+    if (idRow[id]) upd.push([idRow[id].row, row]); else app.push(row);
+  });
+
+  if (upd.length) {
+    if (upd.length <= 12) {
+      upd.forEach(function (u) { ish.getRange(u[0], 1, 1, ITEM_COLS).setValues([u[1]]); });
+    } else {
+      const n = last - 1;
+      const blk = ish.getRange(2, 1, n, ITEM_COLS).getValues();
+      upd.forEach(function (u) { blk[u[0] - 2] = u[1]; });
+      ish.getRange(2, 1, n, ITEM_COLS).setValues(blk);
+    }
+  }
+  const delRows = {};
+  delIds.forEach(function (id) { const e = idRow[String(id)]; if (e) delRows[e.row] = 1; });
+  delDays.forEach(function (d) { (dateRows[String(d)] || []).forEach(function (r) { delRows[r] = 1; }); });
+  deleteRows_(ish, Object.keys(delRows).map(Number));
+  if (app.length) {
+    const start = Math.max(1, ish.getLastRow()) + 1;
+    ensureRows_(ish, start + app.length + 20);
+    ish.getRange(start, 1, app.length, ITEM_COLS).setValues(app);
+  }
+
+  /* ---- รายวัน ---- */
+  if (days.length || delDays.length) {
+    const dsh = sheet_(SH_DAYS);
+    const dl = dsh.getLastRow();
+    const dv = dl > 1 ? dsh.getRange(2, 1, dl - 1, 1).getValues() : [];
+    const dRow = {};
+    dv.forEach(function (r, i) { const d = normDate_(r[0]); if (d) dRow[d] = i + 2; });
+    const dUpd = [], dApp = [];
+    days.forEach(function (d) {
+      const date = String(d.date);
+      if (dRow[date]) dUpd.push([dRow[date], dayRow_(d, now)]);
+      else dApp.push(dayRow_(d, now));
+    });
+    if (dUpd.length) {
+      if (dUpd.length <= 12) {
+        dUpd.forEach(function (u) { dsh.getRange(u[0], 1, 1, DAY_COLS).setValues([u[1]]); });
+      } else {
+        const n = dl - 1;
+        const blk = dsh.getRange(2, 1, n, DAY_COLS).getValues();
+        dUpd.forEach(function (u) { blk[u[0] - 2] = u[1]; });
+        dsh.getRange(2, 1, n, DAY_COLS).setValues(blk);
+      }
+    }
+    deleteRows_(dsh, delDays.map(function (d) { return dRow[String(d)]; }).filter(Boolean));
+    if (dApp.length) {
+      const start = Math.max(1, dsh.getLastRow()) + 1;
+      ensureRows_(dsh, start + dApp.length + 20);
+      dsh.getRange(start, 1, dApp.length, DAY_COLS).setValues(dApp);
+    }
+  }
+
+  /* ---- ตั้งค่า (เจ้าของเท่านั้น) ---- */
+  if (owner && P.cfg) writeCfg_(P.cfg);
+
+  return { ok: true };
+}
+
+function itemRow_(it, role, now) {
+  const q = numOrBlank_(it.qty), p = numOrBlank_(it.price);
+  return [
+    it.id, it.date, clip_(it.order), clip_(it.brand), clip_(it.type), q, clip_(it.extra), p, clip_(it.note),
+    (q === '' || p === '') ? '' : Math.round(q * p * 100) / 100, role, now
+  ];
+}
+function dayRow_(d, now) {
+  let att = '';
+  if (d.att && typeof d.att === 'object') {
+    const o = {};
+    Object.keys(d.att).forEach(function (k) { o[clip_(k)] = !!d.att[k]; });
+    att = JSON.stringify(o);
+  }
+  return [String(d.date), Number(d.deduct) || 0, clip_(d.deductNote), att, now];
+}
+function writeCfg_(c) {
+  const clean = {
+    workers: (Array.isArray(c.workers) ? c.workers : []).map(clip_),
+    types: (Array.isArray(c.types) ? c.types : []).map(function (t) {
+      const pr = numOrBlank_(t && t.price);
+      return { name: clip_(t && t.name), price: pr === '' ? null : pr };
+    }),
+    brands: (Array.isArray(c.brands) ? c.brands : []).map(clip_),
+    defaultBrand: clip_(c.defaultBrand),
+    lastBackup: c.lastBackup ? String(c.lastBackup).slice(0, 40) : null
+  };
+  const sh = sheet_(SH_CFG);
+  const l = sh.getLastRow();
+  const v = l > 0 ? sh.getRange(1, 1, l, 1).getValues() : [];
+  const rowOfKey = {};
+  v.forEach(function (r, i) { if (r[0] !== '') rowOfKey[String(r[0])] = i + 1; });
+  Object.keys(clean).forEach(function (k) {
+    const s = JSON.stringify(clean[k]);
+    if (rowOfKey[k]) sh.getRange(rowOfKey[k], 2).setValue(s);
+    else {
+      const r = Math.max(1, sh.getLastRow()) + 1;
+      ensureRows_(sh, r + 5);
+      sh.getRange(r, 1, 1, 2).setValues([[k, s]]);
+    }
+  });
+}
+
+/* ---------- ตัวช่วยจัดการแถว ---------- */
+function ensureRows_(sh, need) {
+  const mr = sh.getMaxRows();
+  if (need > mr) sh.insertRowsAfter(mr, need - mr + 200);
+}
+function deleteRows_(sh, rows) {
+  if (!rows.length) return;
+  rows.sort(function (a, b) { return b - a; });
+  let i = 0;
+  while (i < rows.length) {
+    let j = i;
+    while (j + 1 < rows.length && rows[j + 1] === rows[j] - 1) j++;
+    sh.deleteRows(rows[j], j - i + 1);
+    i = j + 1;
+  }
+}
