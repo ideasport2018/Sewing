@@ -73,6 +73,8 @@ tr.link:hover td{background:#f5f5f7}
 
 /* มือถือ: เมนูลอยด้านล่างแบบ pill (ไอคอนอย่างเดียว, ตัวที่เลือกโชว์ชื่อ) */
 @media(max-width:760px){
+  /* สำคัญ: backdrop-filter บน header ทำให้ nav ที่เป็น position:fixed ไม่ลอยที่ขอบจอ จึงต้องปิดบนมือถือ */
+  header.top{backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--bg)}
   main.wrap{padding-bottom:110px}
   nav{left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));border:0;border-radius:28px;padding:8px;
       box-shadow:0 2px 6px rgba(20,22,40,.06),0 14px 34px rgba(20,22,40,.14);justify-content:space-between;gap:0}
