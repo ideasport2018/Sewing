@@ -1,0 +1,86 @@
+/* ===== Modern theme: วางไว้ท้ายสุดก่อน </style> ใน Index.html (ก่อนแท็กปิด style) ===== */
+:root{
+  --bg:#ececef; --card:#fff; --ink:#1f2029; --mute:#8a8c97; --line:#ebebef;
+  --acc:#1f2029; --acc-ink:#fff; --acc-soft:#f1f1f4;
+  --ok:#1fa971; --bad:#e0443a; --bad-soft:#fdecea;
+  --shadow:0 1px 2px rgba(20,22,40,.04),0 10px 28px rgba(20,22,40,.06);
+  --r:20px;
+}
+body{background:var(--bg);letter-spacing:.1px}
+
+/* header + nav แบบ pill */
+header.top{background:rgba(236,236,239,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:0}
+.brand{font-weight:700;letter-spacing:-.01em}
+nav{background:#fff;padding:5px;border-radius:999px;box-shadow:var(--shadow);gap:2px}
+nav button{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:9px 16px;color:var(--ink);font-weight:500;transition:background .2s,color .2s}
+nav button::before{content:"";width:20px;height:20px;flex:none;background:currentColor;-webkit-mask:var(--ic) center/contain no-repeat;mask:var(--ic) center/contain no-repeat}
+nav button:hover{background:var(--acc-soft)}
+nav button.on{background:var(--ink);color:#fff;font-weight:600}
+nav button[data-v=daily]{--ic:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='4' width='14' height='17' rx='3'/%3E%3Cpath d='M9 4V3h6v1M9 11h6M9 15h4'/%3E%3C/svg%3E")}
+nav button[data-v=month]{--ic:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='5' width='16' height='16' rx='3'/%3E%3Cpath d='M8 3v4M16 3v4M4 10h16'/%3E%3C/svg%3E")}
+nav button[data-v=year]{--ic:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 20V11M12 20V4M19 20v-6'/%3E%3C/svg%3E")}
+nav button[data-v=settings]{--ic:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h2M10 17h10'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='8' cy='17' r='2'/%3E%3C/svg%3E")}
+
+/* การ์ดและตัวเลขใหญ่ */
+.card,.kpi{border:0;border-radius:var(--r);box-shadow:var(--shadow)}
+.card{padding:20px 22px}
+.card h3{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.kpi{padding:18px 20px}
+.kpi .l{font-size:13px;color:var(--mute)}
+.kpi .v{font-size:30px;font-weight:700;letter-spacing:-.03em}
+.kpi .v small{font-size:14px;font-weight:500;color:var(--mute);letter-spacing:0}
+.kpi .v[style*="--acc"]{color:var(--ok)!important}
+.tot b.net{color:var(--ok)}
+
+/* ปุ่ม + ช่องกรอก */
+button.primary{background:var(--ink);border-radius:999px;padding:10px 20px}
+button.ghost{border:0;background:#fff;border-radius:999px;box-shadow:var(--shadow);padding:8px 16px}
+button.ghost:hover{background:var(--acc-soft)}
+button.danger{border:0;background:var(--bad-soft);border-radius:999px}
+input[type=text],input[type=number],input[type=date],input[type=month],input[type=password],select{
+  background:#f5f5f7;border:1px solid transparent;border-radius:12px;padding:8px 11px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--ink);outline-offset:1px;background:#fff}
+.items tr:hover td{background:transparent}
+
+/* ตาราง */
+th{font-size:12px;letter-spacing:.02em;text-transform:uppercase;color:var(--mute)}
+td,th{border-bottom:1px solid var(--line)}
+tfoot td{background:#f5f5f7}
+tfoot tr td:first-child{border-radius:12px 0 0 12px}
+tfoot tr td:last-child{border-radius:0 12px 12px 0}
+tr.link:hover td{background:#f5f5f7}
+
+/* รายการวันด้านข้าง + chip */
+.dayrow{border-radius:14px;padding:10px 12px}
+.dayrow:hover{background:#f5f5f7}
+.dayrow.on{background:var(--ink);color:#fff}
+.dayrow.on .a{color:rgba(255,255,255,.7)}
+.chip{border:0;background:#f1f1f4;padding:8px 18px}
+.chip.on{background:var(--ink);color:#fff}
+.chip.off{background:var(--bad-soft);color:var(--bad)}
+.badge{background:#f1f1f4;color:var(--ink)}
+.note,#missbox{border-radius:14px}
+
+/* กราฟแท่ง */
+.bar i{background:var(--ink);border-radius:8px 8px 0 0}
+.bar.cur i{background:var(--ok)}
+.bar.empty i{background:#e6e6ea}
+
+/* ล็อกอิน + toast */
+.login{background:var(--bg)}
+.login .card{border-radius:28px;padding:28px 24px}
+#toast{background:var(--ink);border-radius:999px;box-shadow:var(--shadow)}
+
+/* มือถือ: เมนูลอยด้านล่างแบบ pill (ไอคอนอย่างเดียว, ตัวที่เลือกโชว์ชื่อ) */
+@media(max-width:760px){
+  main.wrap{padding-bottom:110px}
+  nav{left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));border:0;border-radius:28px;padding:8px;
+      box-shadow:0 2px 6px rgba(20,22,40,.06),0 14px 34px rgba(20,22,40,.14);justify-content:space-between;gap:0}
+  nav button{flex:0 0 auto;font-size:0;gap:0;padding:12px 14px}
+  nav button::before{width:22px;height:22px}
+  nav button.on{font-size:13px;gap:8px;padding:12px 18px;max-width:62%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #toast{bottom:104px}
+  .card{padding:16px}
+  .kpi .v{font-size:24px}
+  .items tr{border:0;border-radius:18px;box-shadow:var(--shadow)}
+}
