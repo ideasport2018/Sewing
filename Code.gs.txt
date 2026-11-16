@@ -423,7 +423,7 @@ function doPost(e) {
 /* ---------- ฟีดงานที่เย็บแล้ว สำหรับระบบแพ็ค (อ่านอย่างเดียว) ----------
  * ติดตั้ง: รัน setupFeedKey() หนึ่งครั้งในตัวแก้ไข Apps Script แล้วดูคีย์ที่ View > Logs
  * เอาคีย์ไปใส่ใน Script Properties ของสคริปต์แพ็ค (ชื่อ SEWING_FEED_KEY) คีย์นี้ห้ามใส่ในเรโป
- * ส่งกลับเฉพาะ: วันที่, ชื่อออร์เดอร์, แบรนด์, จำนวน (+ id ของแถว ไว้เป็นคีย์ไม่ซ้ำ)
+ * ส่งกลับเฉพาะ: วันที่, ชื่อออร์เดอร์, แบรนด์, ประเภทเสื้อ, จำนวน (+ id ของแถว ไว้เป็นคีย์ไม่ซ้ำ)
  * ไม่ส่งราคา ยอดเงิน หมายเหตุ การมา-ขาด และไม่ส่งแถวค่าแรง (แถวที่ไม่ได้ระบุประเภทเสื้อ เช่น ใส่แขน/ป้ายไซส์/รีด)
  */
 function setupFeedKey() {
@@ -463,7 +463,7 @@ function getSewn(key, opts) {
       const order = String(it.order || '').trim();
       if (it.date < since) return;
       if (!(q > 0) || !order || !String(it.type || '').trim()) return;   // ข้ามแถวค่าแรง/แถวไม่สมบูรณ์
-      rows.push({ id: it.id, date: it.date, order: order, brand: String(it.brand || '').trim(), qty: q });
+      rows.push({ id: it.id, date: it.date, order: order, brand: String(it.brand || '').trim(), type: String(it.type || '').trim(), qty: q });
     });
     rows.sort(function (a, b) {
       if (a.date !== b.date) return a.date < b.date ? 1 : -1;
